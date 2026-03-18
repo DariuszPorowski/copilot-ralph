@@ -285,15 +285,16 @@ func TestPrintDryRun(t *testing.T) {
 	os.Stdout = w
 
 	err := printDryRun(cfg)
+	require.NoError(t, err)
 
-	w.Close()
+	require.NoError(t, w.Close())
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, err = buf.ReadFrom(r)
+	require.NoError(t, err)
 	output := buf.String()
 
-	assert.NoError(t, err)
 	assert.Contains(t, output, "Configuration Preview")
 	assert.Contains(t, output, "test prompt")
 	assert.Contains(t, output, "gpt-4")

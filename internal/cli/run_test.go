@@ -51,11 +51,12 @@ func TestDisplayEventsAndPrints(t *testing.T) {
 	displayEvents(events, cfg)
 
 	// Restore stdout and read
-	w.Close()
+	require.NoError(t, w.Close())
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, err = buf.ReadFrom(r)
+	require.NoError(t, err)
 	output := buf.String()
 
 	// Basic assertions that branches ran
@@ -79,11 +80,12 @@ func TestPrintLoopConfigAndSummary(t *testing.T) {
 	start := time.Now().Add(-2 * time.Second)
 	printSummary(result, start)
 
-	w.Close()
+	require.NoError(t, w.Close())
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, err = buf.ReadFrom(r)
+	require.NoError(t, err)
 	out := buf.String()
 
 	assert.Contains(t, out, "Starting Ralph Loop")

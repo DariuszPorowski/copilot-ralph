@@ -10,6 +10,7 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -204,20 +205,26 @@ func (c *CopilotClient) Stop() error {
 		return nil
 	}
 
+	var stopErr error
+
 	// Destroy any active SDK session
 	if c.sdkSession != nil {
-		_ = c.sdkSession.Destroy()
+		if err := c.sdkSession.Disconnect(); err != nil {
+			stopErr = errors.Join(stopErr, fmt.Errorf("failed to disconnect SDK session: %w", err))
+		}
 		c.sdkSession = nil
 	}
 
 	// Stop the SDK client
 	if c.sdkClient != nil {
-		_ = c.sdkClient.Stop()
+		if err := c.sdkClient.Stop(); err != nil {
+			stopErr = errors.Join(stopErr, fmt.Errorf("failed to stop SDK client: %w", err))
+		}
 		c.sdkClient = nil
 	}
 
 	c.started = false
-	return nil
+	return stopErr
 }
 
 // CreateSession creates a new Copilot session.
@@ -229,8 +236,9 @@ func (c *CopilotClient) CreateSession(ctx context.Context) error {
 
 	// Build session config for the SDK
 	sessionConfig := &copilot.SessionConfig{
-		Model:     c.model,
-		Streaming: c.streaming,
+		Model:               c.model,
+		Streaming:           c.streaming,
+		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
 	}
 
 	// Configure system message if provided
@@ -258,7 +266,10 @@ func (c *CopilotClient) DestroySession(ctx context.Context) error {
 		return nil
 	}
 
-	_ = c.sdkSession.Destroy()
+	if err := c.sdkSession.Disconnect(); err != nil {
+		return fmt.Errorf("failed to disconnect SDK session: %w", err)
+	}
+
 	c.sdkSession = nil
 	return nil
 }
@@ -473,7 +484,9 @@ func (c *CopilotClient) handleSDKEvent(sdkEvent copilot.SessionEvent, events cha
 		var toolErr error
 
 		if sdkEvent.Data.Result != nil {
-			result = sdkEvent.Data.Result.Content
+			if sdkEvent.Data.Result.Content != nil {
+				result = *sdkEvent.Data.Result.Content
+			}
 		}
 
 		if sdkEvent.Data.Success != nil && !*sdkEvent.Data.Success {

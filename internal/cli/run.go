@@ -129,7 +129,11 @@ func runLoop(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create SDK client: %w", err)
 	}
-	defer sdkClient.Stop()
+	defer func() {
+		if stopErr := sdkClient.Stop(); stopErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to stop SDK client: %v\n", stopErr)
+		}
+	}()
 
 	baseCtx := cmd.Context()
 

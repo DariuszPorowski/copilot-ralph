@@ -138,7 +138,9 @@ func TestCopilotClientCreateSession(t *testing.T) {
 		skipIfNoSDK(t)
 		client, err := NewCopilotClient()
 		require.NoError(t, err)
-		defer client.Stop()
+		defer func() {
+			require.NoError(t, client.Stop())
+		}()
 
 		// If SDK is not available, CreateSession will return an error "SDK client not initialized" when the client wasn't started.
 		// This expectation ensures tests behave correctly when SDK is absent.
@@ -153,7 +155,9 @@ func TestCopilotClientCreateSession(t *testing.T) {
 		skipIfNoSDK(t)
 		client, err := NewCopilotClient()
 		require.NoError(t, err)
-		defer client.Stop()
+		defer func() {
+			require.NoError(t, client.Stop())
+		}()
 
 		// Start the client to ensure sdkClient is initialized
 		err = client.Start(t.Context())
@@ -169,7 +173,9 @@ func TestCopilotClientCreateSession(t *testing.T) {
 			WithSystemMessage("You are Ralph", "append"),
 		)
 		require.NoError(t, err)
-		defer client.Stop()
+		defer func() {
+			require.NoError(t, client.Stop())
+		}()
 
 		err = client.CreateSession(t.Context())
 		if err != nil {
@@ -185,7 +191,9 @@ func TestCopilotClientDestroySession(t *testing.T) {
 		skipIfNoSDK(t)
 		client, err := NewCopilotClient()
 		require.NoError(t, err)
-		defer client.Stop()
+		defer func() {
+			require.NoError(t, client.Stop())
+		}()
 
 		err = client.CreateSession(t.Context())
 		if err != nil {
@@ -202,7 +210,9 @@ func TestCopilotClientDestroySession(t *testing.T) {
 		skipIfNoSDK(t)
 		client, err := NewCopilotClient()
 		require.NoError(t, err)
-		defer client.Stop()
+		defer func() {
+			require.NoError(t, client.Stop())
+		}()
 
 		err = client.DestroySession(t.Context())
 		require.NoError(t, err)
@@ -219,7 +229,9 @@ func TestCopilotClientConcurrency(t *testing.T) {
 	t.Run("concurrent session access", func(t *testing.T) {
 		client, err := NewCopilotClient()
 		require.NoError(t, err)
-		defer client.Stop()
+		defer func() {
+			require.NoError(t, client.Stop())
+		}()
 
 		err = client.CreateSession(t.Context())
 		if err != nil {
@@ -377,11 +389,6 @@ func TestSendPromptWithRetryCancelledContext(t *testing.T) {
 	client, err := NewCopilotClient()
 	assert.NoError(t, err)
 
-	// Create a fake sdk.Session with Send that returns error
-	// Define a minimal struct to illustrate intent; not used directly in assertions
-	type fakeSession struct{}
-	// Methods would be defined on fakeSession in a full mock, but are omitted here
-
 	// Can't inject this into client easily; instead test is limited to asserting client methods exist
 	assert.Equal(t, "gpt-4", client.Model())
 
@@ -411,61 +418,6 @@ func TestIsRetryableErrorEdgeCases(t *testing.T) {
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
-
-// fakeSession implements the minimal subset of copilot.Session used by client.go
-type fakeSession struct {
-	sendFunc func()
-	handlers []func(copilot.SessionEvent)
-}
-
-func (f *fakeSession) On(h func(copilot.SessionEvent)) func() {
-	f.handlers = append(f.handlers, h)
-	idx := len(f.handlers) - 1
-	return func() {
-		// remove handler
-		f.handlers[idx] = nil
-	}
-}
-
-func (f *fakeSession) Send(opts any) (string, error) {
-	// Simulate asynchronous events being emitted
-	go func() {
-		handlers := append([]func(copilot.SessionEvent){}, f.handlers...)
-
-		// 1) streaming delta
-		for _, h := range handlers {
-			if h == nil {
-				continue
-			}
-			h(copilot.SessionEvent{Type: "assistant.message_delta", Data: copilot.Data{DeltaContent: new("Hello ")}})
-		}
-
-		// 2) final message
-		for _, h := range handlers {
-			if h == nil {
-				continue
-			}
-			h(copilot.SessionEvent{Type: "assistant.message", Data: copilot.Data{Content: new("Hello world")}})
-		}
-
-		// 3) session idle
-		for _, h := range handlers {
-			if h == nil {
-				continue
-			}
-			h(copilot.SessionEvent{Type: "session.idle"})
-		}
-	}()
-
-	if f.sendFunc != nil {
-		f.sendFunc()
-	}
-
-	return "msg-id", nil
-}
-
-func (f *fakeSession) Abort() error   { return nil }
-func (f *fakeSession) Destroy() error { return nil }
 
 // testEventDrainTimeout is used by tests that need to drain the events channel
 // without relying on the producer to close it. We use a short timeout to avoid
@@ -499,12 +451,11 @@ func TestHandleSDKEventVariousTypes(t *testing.T) {
 	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_start", Data: copilot.Data{ToolName: new("edit"), ToolCallID: new("1"), Arguments: map[string]any{"path": "a.go"}}}, events, closeDone, pending)
 
 	// tool.execution_complete success
-	// adapt to copilot.ToolResult fields
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: new("1"), ToolName: new("edit"), Result: &copilot.Result{Content: "ok"}, Success: new(true)}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: new("1"), ToolName: new("edit"), Result: &copilot.Result{Content: new("ok")}, Success: new(true)}}, events, closeDone, pending)
 
 	// tool.execution_complete failure with Error.String
 	errStr := "tool failed"
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: new("2"), ToolName: new("run"), Result: &copilot.Result{Content: ""}, Success: new(false), Error: &copilot.ErrorUnion{String: &errStr}}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: new("2"), ToolName: new("run"), Result: &copilot.Result{Content: new("")}, Success: new(false), Error: &copilot.ErrorUnion{String: &errStr}}}, events, closeDone, pending)
 
 	// session.error
 	msg := "bad"
@@ -576,18 +527,3 @@ drainLoop:
 		}
 	}
 }
-
-// testSessionAdapter adapts fakeSession to the concrete type expected by client.sendPromptOnce signature
-// by implementing the methods used by sendPromptOnce via compatible signatures.
-
-type testSessionAdapter struct{ inner *fakeSession }
-
-func (a *testSessionAdapter) On(h func(copilot.SessionEvent)) func() {
-	return a.inner.On(func(e copilot.SessionEvent) { h(copilot.SessionEvent{Type: e.Type, Data: copilot.Data{}}) })
-}
-func (a *testSessionAdapter) Send(opts copilot.MessageOptions) (string, error) {
-	// Delegate to inner and ignore options
-	return a.inner.Send(nil)
-}
-func (a *testSessionAdapter) Abort() error   { return a.inner.Abort() }
-func (a *testSessionAdapter) Destroy() error { return a.inner.Destroy() }
