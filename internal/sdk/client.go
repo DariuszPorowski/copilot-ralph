@@ -386,8 +386,10 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 		default:
 		}
 
-		if event.Type == "session.error" && event.Data.Message != nil {
-			sessionErr = fmt.Errorf("SDK error: %s", *event.Data.Message)
+		if event.Type == copilot.SessionEventTypeSessionError {
+			if data, ok := event.Data.(*copilot.SessionErrorData); ok {
+				sessionErr = fmt.Errorf("SDK error: %s", data.Message)
+			}
 		}
 
 		c.handleSDKEvent(event, events, closeDone, pendingToolCalls)
@@ -427,91 +429,92 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 // Uses safeEventSender to protect against writing to closed channels.
 func (c *CopilotClient) handleSDKEvent(sdkEvent copilot.SessionEvent, events chan<- Event, closeDone func(), pendingToolCalls map[string]ToolCall) {
 	switch sdkEvent.Type {
-	case "assistant.message_delta", "assistant.reasoning_delta":
-		if sdkEvent.Data.DeltaContent == nil {
+	case copilot.SessionEventTypeAssistantMessageDelta:
+		data, ok := sdkEvent.Data.(*copilot.AssistantMessageDeltaData)
+		if !ok {
 			return
 		}
 
-		_ = safeEventSender(events, NewTextEvent(*sdkEvent.Data.DeltaContent, strings.Contains(string(sdkEvent.Type), "reasoning")))
+		_ = safeEventSender(events, NewTextEvent(data.DeltaContent, false))
 
-	case "assistant.message", "assistant.reasoning":
-		// Complete assistant message
-		if sdkEvent.Data.Content == nil {
+	case copilot.SessionEventTypeAssistantReasoningDelta:
+		data, ok := sdkEvent.Data.(*copilot.AssistantReasoningDeltaData)
+		if !ok {
 			return
 		}
 
-		_ = safeEventSender(events, NewTextEvent(*sdkEvent.Data.Content, strings.Contains(string(sdkEvent.Type), "reasoning")))
+		_ = safeEventSender(events, NewTextEvent(data.DeltaContent, true))
 
-	case "tool.execution_start":
-		// Tool execution started - the SDK handles this internally
-		// We just track it for logging/UI purposes and to match with completion events
-		if sdkEvent.Data.ToolName == nil {
+	case copilot.SessionEventTypeAssistantMessage:
+		data, ok := sdkEvent.Data.(*copilot.AssistantMessageData)
+		if !ok {
+			return
+		}
+
+		_ = safeEventSender(events, NewTextEvent(data.Content, false))
+
+	case copilot.SessionEventTypeAssistantReasoning:
+		data, ok := sdkEvent.Data.(*copilot.AssistantReasoningData)
+		if !ok {
+			return
+		}
+
+		_ = safeEventSender(events, NewTextEvent(data.Content, true))
+
+	case copilot.SessionEventTypeToolExecutionStart:
+		data, ok := sdkEvent.Data.(*copilot.ToolExecutionStartData)
+		if !ok {
 			return
 		}
 
 		toolCall := ToolCall{
-			Name: *sdkEvent.Data.ToolName,
+			ID:   data.ToolCallID,
+			Name: data.ToolName,
 		}
 
-		if sdkEvent.Data.ToolCallID != nil {
-			toolCall.ID = *sdkEvent.Data.ToolCallID
-			// Store for matching with completion event
-			pendingToolCalls[toolCall.ID] = toolCall
-		}
+		pendingToolCalls[toolCall.ID] = toolCall
 
-		// Type assert Arguments to map[string]interface{} if possible
-		if args, ok := sdkEvent.Data.Arguments.(map[string]any); ok {
+		if args, ok := data.Arguments.(map[string]any); ok {
 			toolCall.Parameters = args
 		}
 
 		_ = safeEventSender(events, NewToolCallEvent(toolCall))
 
-	case "tool.execution_complete":
-		// Tool execution completed - emit result event with actual result from SDK
-		var toolCall ToolCall
-		if sdkEvent.Data.ToolCallID != nil {
-			if tc, ok := pendingToolCalls[*sdkEvent.Data.ToolCallID]; ok {
-				toolCall = tc
-				delete(pendingToolCalls, *sdkEvent.Data.ToolCallID)
-			}
+	case copilot.SessionEventTypeToolExecutionComplete:
+		data, ok := sdkEvent.Data.(*copilot.ToolExecutionCompleteData)
+		if !ok {
+			return
 		}
 
-		if toolCall.Name == "" && sdkEvent.Data.ToolName != nil {
-			toolCall.Name = *sdkEvent.Data.ToolName
+		var toolCall ToolCall
+		if tc, ok := pendingToolCalls[data.ToolCallID]; ok {
+			toolCall = tc
+			delete(pendingToolCalls, data.ToolCallID)
 		}
 
 		var result string
 		var toolErr error
 
-		if sdkEvent.Data.Result != nil {
-			if sdkEvent.Data.Result.Content != nil {
-				result = *sdkEvent.Data.Result.Content
-			}
+		if data.Result != nil {
+			result = data.Result.Content
 		}
 
-		if sdkEvent.Data.Success != nil && !*sdkEvent.Data.Success {
-			if sdkEvent.Data.Error != nil {
-				// ErrorUnion can be either ErrorClass or String
-				if sdkEvent.Data.Error.ErrorClass != nil {
-					toolErr = fmt.Errorf("%s", sdkEvent.Data.Error.ErrorClass.Message)
-				} else if sdkEvent.Data.Error.String != nil {
-					toolErr = fmt.Errorf("%s", *sdkEvent.Data.Error.String)
-				}
-			}
+		if !data.Success && data.Error != nil {
+			toolErr = fmt.Errorf("%s", data.Error.Message)
 		}
 
 		_ = safeEventSender(events, NewToolResultEvent(toolCall, result, toolErr))
 
-	case "session.idle":
+	case copilot.SessionEventTypeSessionIdle:
 		// Session has finished processing
 		closeDone()
 
-	case "session.error":
-		// Error event
-		if sdkEvent.Data.Message == nil {
+	case copilot.SessionEventTypeSessionError:
+		data, ok := sdkEvent.Data.(*copilot.SessionErrorData)
+		if !ok {
 			return
 		}
 
-		_ = safeEventSender(events, NewErrorEvent(fmt.Errorf("SDK error: %s", *sdkEvent.Data.Message)))
+		_ = safeEventSender(events, NewErrorEvent(fmt.Errorf("SDK error: %s", data.Message)))
 	}
 }

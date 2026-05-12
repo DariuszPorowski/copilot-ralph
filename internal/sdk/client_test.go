@@ -442,27 +442,28 @@ func TestHandleSDKEventVariousTypes(t *testing.T) {
 	pending := make(map[string]ToolCall)
 
 	// assistant.message_delta
-	c.handleSDKEvent(copilot.SessionEvent{Type: "assistant.message_delta", Data: copilot.Data{DeltaContent: new("part")}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeAssistantMessageDelta, Data: &copilot.AssistantMessageDeltaData{DeltaContent: "part"}}, events, closeDone, pending)
 
 	// assistant.message
-	c.handleSDKEvent(copilot.SessionEvent{Type: "assistant.message", Data: copilot.Data{Content: new("full")}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{Content: "full"}}, events, closeDone, pending)
+
+	// assistant.reasoning_delta
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeAssistantReasoningDelta, Data: &copilot.AssistantReasoningDeltaData{DeltaContent: "thinking"}}, events, closeDone, pending)
 
 	// tool.execution_start
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_start", Data: copilot.Data{ToolName: new("edit"), ToolCallID: new("1"), Arguments: map[string]any{"path": "a.go"}}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeToolExecutionStart, Data: &copilot.ToolExecutionStartData{ToolName: "edit", ToolCallID: "1", Arguments: map[string]any{"path": "a.go"}}}, events, closeDone, pending)
 
 	// tool.execution_complete success
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: new("1"), ToolName: new("edit"), Result: &copilot.Result{Content: new("ok")}, Success: new(true)}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeToolExecutionComplete, Data: &copilot.ToolExecutionCompleteData{ToolCallID: "1", Result: &copilot.ToolExecutionCompleteResult{Content: "ok"}, Success: true}}, events, closeDone, pending)
 
-	// tool.execution_complete failure with Error.String
-	errStr := "tool failed"
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: new("2"), ToolName: new("run"), Result: &copilot.Result{Content: new("")}, Success: new(false), Error: &copilot.ErrorUnion{String: &errStr}}}, events, closeDone, pending)
+	// tool.execution_complete failure
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeToolExecutionComplete, Data: &copilot.ToolExecutionCompleteData{ToolCallID: "2", Result: &copilot.ToolExecutionCompleteResult{Content: ""}, Success: false, Error: &copilot.ToolExecutionCompleteError{Message: "tool failed"}}}, events, closeDone, pending)
 
 	// session.error
-	msg := "bad"
-	c.handleSDKEvent(copilot.SessionEvent{Type: "session.error", Data: copilot.Data{Message: &msg}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeSessionError, Data: &copilot.SessionErrorData{Message: "bad"}}, events, closeDone, pending)
 
 	// session.idle should call closeDone
-	c.handleSDKEvent(copilot.SessionEvent{Type: "session.idle"}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}, events, closeDone, pending)
 
 	// Drain events and assert some expected types
 	received := []Event{}
