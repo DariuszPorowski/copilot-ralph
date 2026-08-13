@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,13 +27,29 @@ func skipIfNoSDK(t *testing.T) {
 	}
 
 	// Check if copilot CLI is available
-	_, err := exec.LookPath("copilot")
+	cliPath, err := exec.LookPath("copilot")
 	if err != nil {
 		// On Windows, also check for copilot.cmd
-		_, err = exec.LookPath("copilot.cmd")
+		cliPath, err = exec.LookPath("copilot.cmd")
 		if err != nil {
 			t.Skip("Skipping test: copilot CLI not found in PATH")
 		}
+	}
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	output, err := exec.CommandContext(ctx, cliPath, "--version").CombinedOutput()
+	if err != nil {
+		t.Skipf(
+			"Skipping test: copilot CLI is not runnable: %v (%s)",
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
 }
 func TestNewCopilotClient(t *testing.T) {
