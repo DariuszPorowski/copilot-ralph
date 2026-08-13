@@ -198,6 +198,25 @@ func TestRunCommandModelDefault(t *testing.T) {
 	assert.Equal(t, "auto", modelFlag.DefValue)
 }
 
+func TestRunCommandListModelsDefault(t *testing.T) {
+	listModelsFlag := runCmd.Flags().Lookup("list-models")
+	require.NotNil(t, listModelsFlag)
+	assert.Equal(t, "false", listModelsFlag.DefValue)
+}
+
+func TestRunLoopRequiresPrompt(t *testing.T) {
+	originalListModels := runListModels
+	runListModels = false
+	defer func() {
+		runListModels = originalListModels
+	}()
+
+	err := runLoop(runCmd, nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prompt is required")
+}
+
 func TestConfigExists(t *testing.T) {
 	tests := []struct {
 		setup    func(t *testing.T) string

@@ -77,6 +77,9 @@ ralph run task_description.md
 # With options
 ralph run --max-iterations 5 --timeout 10m "Refactor authentication"
 
+# List models available to your Copilot account
+ralph run --list-models
+
 # Custom model and settings
 ralph run \
   --model auto \
@@ -149,6 +152,9 @@ ralph run \
 # Dry run (show what would happen)
 ralph run --dry-run "Refactor database layer"
 
+# List models available to your Copilot account
+ralph run --list-models
+
 # With custom system message
 ralph run \
   --system-prompt "You are an expert Go developer" \
@@ -162,6 +168,7 @@ Available flags:
 - `--timeout, -t` - Maximum loop runtime (default: 30m)
 - `--promise` - Completion promise phrase (default: "I'm special!")
 - `--model` - AI model to use (default: auto)
+- `--list-models` - List available AI model IDs and names, then exit
 - `--working-dir` - Working directory (default: current)
 - `--log-level` - Log level: debug, info, warn, error (default: info)
 - `--streaming` - Enable streaming responses (default: true)

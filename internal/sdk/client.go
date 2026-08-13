@@ -78,6 +78,12 @@ type CopilotClient struct {
 	started           bool
 }
 
+// Model describes an AI model available to the authenticated Copilot user.
+type Model struct {
+	ID   string
+	Name string
+}
+
 type sdkClientStopper interface {
 	Stop() error
 	ForceStop()
@@ -292,6 +298,28 @@ func (c *CopilotClient) DestroySession(ctx context.Context) error {
 // Model returns the configured model name.
 func (c *CopilotClient) Model() string {
 	return c.model
+}
+
+// ListModels returns the AI models available to the authenticated Copilot user.
+func (c *CopilotClient) ListModels(ctx context.Context) ([]Model, error) {
+	if c.sdkClient == nil {
+		return nil, fmt.Errorf("SDK client not initialized")
+	}
+
+	sdkModels, err := c.sdkClient.ListModels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list models: %w", err)
+	}
+
+	models := make([]Model, len(sdkModels))
+	for index, model := range sdkModels {
+		models[index] = Model{
+			ID:   model.ID,
+			Name: model.Name,
+		}
+	}
+
+	return models, nil
 }
 
 // SendPrompt sends a prompt to the Copilot SDK and returns an event stream.

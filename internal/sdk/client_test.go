@@ -273,6 +273,38 @@ func TestCopilotClientSendPrompt(t *testing.T) {
 
 }
 
+func TestCopilotClientListModels(t *testing.T) {
+	t.Run("requires started client", func(t *testing.T) {
+		client, err := NewCopilotClient()
+		require.NoError(t, err)
+
+		models, err := client.ListModels(t.Context())
+
+		require.Error(t, err)
+		assert.Nil(t, models)
+		assert.Contains(t, err.Error(), "SDK client not initialized")
+	})
+
+	t.Run("lists available models", func(t *testing.T) {
+		skipIfNoSDK(t)
+		client, err := NewCopilotClient()
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, client.Stop())
+		}()
+
+		require.NoError(t, client.Start(t.Context()))
+
+		models, err := client.ListModels(t.Context())
+
+		require.NoError(t, err)
+		require.NotEmpty(t, models)
+		for _, model := range models {
+			assert.NotEmpty(t, model.ID)
+		}
+	})
+}
+
 func TestCopilotClientConcurrency(t *testing.T) {
 	skipIfNoSDK(t)
 
