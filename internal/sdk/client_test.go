@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -130,6 +131,38 @@ func TestCopilotClientStartStop(t *testing.T) {
 		err = client.Stop()
 		require.NoError(t, err)
 	})
+}
+
+type mockSDKClientStopper struct {
+	stopErr         error
+	stopCalled      bool
+	forceStopCalled bool
+}
+
+func (m *mockSDKClientStopper) Stop() error {
+	m.stopCalled = true
+	return m.stopErr
+}
+
+func (m *mockSDKClientStopper) ForceStop() {
+	m.forceStopCalled = true
+}
+
+func TestStopSDKClient(t *testing.T) {
+	stopper := &mockSDKClientStopper{stopErr: assert.AnError}
+
+	err := stopSDKClient(stopper)
+
+	if runtime.GOOS == "windows" {
+		require.NoError(t, err)
+		assert.True(t, stopper.forceStopCalled)
+		assert.False(t, stopper.stopCalled)
+		return
+	}
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.True(t, stopper.stopCalled)
+	assert.False(t, stopper.forceStopCalled)
 }
 
 func TestCopilotClientCreateSession(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,20 @@ type CopilotClient struct {
 	timeout           time.Duration
 	streaming         bool
 	started           bool
+}
+
+type sdkClientStopper interface {
+	Stop() error
+	ForceStop()
+}
+
+func stopSDKClient(client sdkClientStopper) error {
+	if runtime.GOOS == "windows" {
+		client.ForceStop()
+		return nil
+	}
+
+	return client.Stop()
 }
 
 // clientConfig holds configuration options for the client.
@@ -217,7 +232,7 @@ func (c *CopilotClient) Stop() error {
 
 	// Stop the SDK client
 	if c.sdkClient != nil {
-		if err := c.sdkClient.Stop(); err != nil {
+		if err := stopSDKClient(c.sdkClient); err != nil {
 			stopErr = errors.Join(stopErr, fmt.Errorf("failed to stop SDK client: %w", err))
 		}
 		c.sdkClient = nil
