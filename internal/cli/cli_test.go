@@ -192,6 +192,12 @@ func TestBuildLoopConfig(t *testing.T) {
 	}
 }
 
+func TestRunCommandModelDefault(t *testing.T) {
+	modelFlag := runCmd.Flags().Lookup("model")
+	require.NotNil(t, modelFlag)
+	assert.Equal(t, "auto", modelFlag.DefValue)
+}
+
 func TestConfigExists(t *testing.T) {
 	tests := []struct {
 		setup    func(t *testing.T) string

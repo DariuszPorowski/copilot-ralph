@@ -79,7 +79,7 @@ ralph run --max-iterations 5 --timeout 10m "Refactor authentication"
 
 # Custom model and settings
 ralph run \
-  --model gpt-4-turbo \
+  --model auto \
   --promise "Task complete!" \
   --streaming=true \
   "Implement user authentication"
@@ -142,7 +142,7 @@ ralph run task_description.md
 ralph run \
   --max-iterations 20 \
   --timeout 1h \
-  --model gpt-4-turbo \
+  --model auto \
   --log-level debug \
   "Implement user authentication"
 
@@ -161,7 +161,7 @@ Available flags:
 - `--max-iterations, -m` - Maximum loop iterations (default: 10)
 - `--timeout, -t` - Maximum loop runtime (default: 30m)
 - `--promise` - Completion promise phrase (default: "I'm special!")
-- `--model` - AI model to use (default: gpt-4)
+- `--model` - AI model to use (default: auto)
 - `--working-dir` - Working directory (default: current)
 - `--log-level` - Log level: debug, info, warn, error (default: info)
 - `--streaming` - Enable streaming responses (default: true)
@@ -188,7 +188,7 @@ Common flags:
 
 - `--max-iterations 10` - Maximum iterations before stopping
 - `--timeout 30m` - Maximum runtime
-- `--model gpt-4` - AI model to use
+- `--model auto` - Let Copilot select an available model
 - `--promise "I'm special!"` - Completion phrase
 - `--log-level info` - Logging verbosity
 - `--streaming true` - Enable streaming responses

@@ -390,7 +390,7 @@ func TestSendPromptWithRetryCancelledContext(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Can't inject this into client easily; instead test is limited to asserting client methods exist
-	assert.Equal(t, "gpt-4", client.Model())
+	assert.Equal(t, DefaultModel, client.Model())
 
 	// Ensure safeEventSender returns error on closed channel
 	events := make(chan Event, 1)
@@ -442,28 +442,28 @@ func TestHandleSDKEventVariousTypes(t *testing.T) {
 	pending := make(map[string]ToolCall)
 
 	// assistant.message_delta
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeAssistantMessageDelta, Data: &copilot.AssistantMessageDeltaData{DeltaContent: "part"}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.AssistantMessageDeltaData{DeltaContent: "part"}}, events, closeDone, pending)
 
 	// assistant.message
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{Content: "full"}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.AssistantMessageData{Content: "full"}}, events, closeDone, pending)
 
 	// assistant.reasoning_delta
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeAssistantReasoningDelta, Data: &copilot.AssistantReasoningDeltaData{DeltaContent: "thinking"}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.AssistantReasoningDeltaData{DeltaContent: "thinking"}}, events, closeDone, pending)
 
 	// tool.execution_start
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeToolExecutionStart, Data: &copilot.ToolExecutionStartData{ToolName: "edit", ToolCallID: "1", Arguments: map[string]any{"path": "a.go"}}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.ToolExecutionStartData{ToolName: "edit", ToolCallID: "1", Arguments: map[string]any{"path": "a.go"}}}, events, closeDone, pending)
 
 	// tool.execution_complete success
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeToolExecutionComplete, Data: &copilot.ToolExecutionCompleteData{ToolCallID: "1", Result: &copilot.ToolExecutionCompleteResult{Content: "ok"}, Success: true}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.ToolExecutionCompleteData{ToolCallID: "1", Result: &copilot.ToolExecutionCompleteResult{Content: "ok"}, Success: true}}, events, closeDone, pending)
 
 	// tool.execution_complete failure
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeToolExecutionComplete, Data: &copilot.ToolExecutionCompleteData{ToolCallID: "2", Result: &copilot.ToolExecutionCompleteResult{Content: ""}, Success: false, Error: &copilot.ToolExecutionCompleteError{Message: "tool failed"}}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.ToolExecutionCompleteData{ToolCallID: "2", Result: &copilot.ToolExecutionCompleteResult{Content: ""}, Success: false, Error: &copilot.ToolExecutionCompleteError{Message: "tool failed"}}}, events, closeDone, pending)
 
 	// session.error
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeSessionError, Data: &copilot.SessionErrorData{Message: "bad"}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.SessionErrorData{Message: "bad"}}, events, closeDone, pending)
 
 	// session.idle should call closeDone
-	c.handleSDKEvent(copilot.SessionEvent{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{Data: &copilot.SessionIdleData{}}, events, closeDone, pending)
 
 	// Drain events and assert some expected types
 	received := []Event{}
@@ -473,7 +473,7 @@ loop:
 		select {
 		case ev := <-events:
 			received = append(received, ev)
-			if len(received) >= 6 {
+			if len(received) >= 7 {
 				break loop
 			}
 		case <-down:

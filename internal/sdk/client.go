@@ -21,7 +21,7 @@ import (
 
 // Default configuration values.
 const (
-	DefaultModel     = "gpt-4"
+	DefaultModel     = "auto"
 	DefaultLogLevel  = "info"
 	DefaultTimeout   = 60 * time.Second
 	DefaultStreaming = true
@@ -186,8 +186,8 @@ func (c *CopilotClient) Start(ctx context.Context) error {
 
 	// Initialize the SDK client with options
 	c.sdkClient = copilot.NewClient(&copilot.ClientOptions{
-		LogLevel: c.logLevel,
-		Cwd:      c.workingDir,
+		LogLevel:         c.logLevel,
+		WorkingDirectory: c.workingDir,
 	})
 
 	// Start the SDK client
@@ -237,7 +237,7 @@ func (c *CopilotClient) CreateSession(ctx context.Context) error {
 	// Build session config for the SDK
 	sessionConfig := &copilot.SessionConfig{
 		Model:               c.model,
-		Streaming:           c.streaming,
+		Streaming:           copilot.Bool(c.streaming),
 		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
 	}
 
@@ -386,7 +386,7 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 		default:
 		}
 
-		if event.Type == copilot.SessionEventTypeSessionError {
+		if event.Type() == copilot.SessionEventTypeSessionError {
 			if data, ok := event.Data.(*copilot.SessionErrorData); ok {
 				sessionErr = fmt.Errorf("SDK error: %s", data.Message)
 			}
@@ -428,7 +428,7 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 // handleSDKEvent processes events from the Copilot SDK and forwards them.
 // Uses safeEventSender to protect against writing to closed channels.
 func (c *CopilotClient) handleSDKEvent(sdkEvent copilot.SessionEvent, events chan<- Event, closeDone func(), pendingToolCalls map[string]ToolCall) {
-	switch sdkEvent.Type {
+	switch sdkEvent.Type() {
 	case copilot.SessionEventTypeAssistantMessageDelta:
 		data, ok := sdkEvent.Data.(*copilot.AssistantMessageDeltaData)
 		if !ok {
