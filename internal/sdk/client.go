@@ -10,6 +10,7 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -20,7 +21,7 @@ import (
 
 // Default configuration values.
 const (
-	DefaultModel     = "gpt-4"
+	DefaultModel     = "auto"
 	DefaultLogLevel  = "info"
 	DefaultTimeout   = 60 * time.Second
 	DefaultStreaming = true
@@ -32,6 +33,8 @@ var retryBackoffs = []time.Duration{
 	2 * time.Second,
 	5 * time.Second,
 }
+
+const sdkProcessExitTimeout = "timed out waiting for CLI process to exit after kill"
 
 // isRetryableError determines if an error is transient and can be retried.
 func isRetryableError(err error) bool {
@@ -59,6 +62,10 @@ func isRetryableError(err error) bool {
 		return true
 	}
 	return false
+}
+
+func isSDKProcessExitTimeout(err error) bool {
+	return err != nil && strings.Contains(err.Error(), sdkProcessExitTimeout)
 }
 
 // CopilotClient wraps the GitHub Copilot SDK.
@@ -173,7 +180,7 @@ func NewCopilotClient(opts ...ClientOption) (*CopilotClient, error) {
 	}, nil
 }
 
-// startLocked starts the client (must be called with lock held).
+// Start starts the Copilot SDK client.
 func (c *CopilotClient) Start() error {
 	if c.started {
 		return nil
@@ -181,12 +188,12 @@ func (c *CopilotClient) Start() error {
 
 	// Initialize the SDK client with options
 	c.sdkClient = copilot.NewClient(&copilot.ClientOptions{
-		LogLevel: c.logLevel,
-		Cwd:      c.workingDir,
+		LogLevel:         c.logLevel,
+		WorkingDirectory: c.workingDir,
 	})
 
 	// Start the SDK client
-	if err := c.sdkClient.Start(); err != nil {
+	if err := c.sdkClient.Start(context.Background()); err != nil {
 		return fmt.Errorf("failed to start SDK client: %w", err)
 	}
 
@@ -200,20 +207,24 @@ func (c *CopilotClient) Stop() error {
 		return nil
 	}
 
-	// Destroy any active SDK session
-	if c.sdkSession != nil {
-		_ = c.sdkSession.Destroy()
-		c.sdkSession = nil
-	}
+	var stopErr error
+
+	// The SDK client owns and disconnects all active sessions during Stop.
+	c.sdkSession = nil
 
 	// Stop the SDK client
 	if c.sdkClient != nil {
-		_ = c.sdkClient.Stop()
+		if err := c.sdkClient.Stop(); err != nil {
+			c.sdkClient.ForceStop()
+			if !isSDKProcessExitTimeout(err) {
+				stopErr = fmt.Errorf("failed to stop SDK client: %w", err)
+			}
+		}
 		c.sdkClient = nil
 	}
 
 	c.started = false
-	return nil
+	return stopErr
 }
 
 // CreateSession creates a new Copilot session.
@@ -226,7 +237,7 @@ func (c *CopilotClient) CreateSession(ctx context.Context) error {
 	// Build session config for the SDK
 	sessionConfig := &copilot.SessionConfig{
 		Model:     c.model,
-		Streaming: c.streaming,
+		Streaming: copilot.Bool(c.streaming),
 	}
 
 	// Configure system message if provided
@@ -238,7 +249,7 @@ func (c *CopilotClient) CreateSession(ctx context.Context) error {
 	}
 
 	// Create SDK session
-	sdkSession, err := c.sdkClient.CreateSession(sessionConfig)
+	sdkSession, err := c.sdkClient.CreateSession(ctx, sessionConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create SDK session: %w", err)
 	}
@@ -254,7 +265,9 @@ func (c *CopilotClient) DestroySession(ctx context.Context) error {
 		return nil
 	}
 
-	_ = c.sdkSession.Destroy()
+	if err := c.sdkSession.Disconnect(); err != nil {
+		return fmt.Errorf("failed to disconnect SDK session: %w", err)
+	}
 	c.sdkSession = nil
 	return nil
 }
@@ -371,8 +384,8 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 		default:
 		}
 
-		if event.Type == "session.error" && event.Data.Message != nil {
-			sessionErr = fmt.Errorf("SDK error: %s", *event.Data.Message)
+		if data, ok := event.Data.(*copilot.SessionErrorData); ok {
+			sessionErr = fmt.Errorf("SDK error: %s", data.Message)
 		}
 
 		c.handleSDKEvent(event, events, closeDone, pendingToolCalls)
@@ -381,7 +394,7 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 	defer unsubscribe()
 
 	// Send the message
-	_, err := c.sdkSession.Send(copilot.MessageOptions{
+	_, err := c.sdkSession.Send(ctx, copilot.MessageOptions{
 		Prompt: prompt,
 	})
 	if err != nil {
@@ -393,7 +406,7 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 	case <-ctx.Done():
 		// Abort the session and close done to unblock any waiting
 		go func() {
-			_ = c.sdkSession.Abort()
+			_ = c.sdkSession.Abort(context.Background())
 		}()
 
 		closeDone()
@@ -411,90 +424,71 @@ func (c *CopilotClient) sendPromptOnce(ctx context.Context, prompt string, event
 // handleSDKEvent processes events from the Copilot SDK and forwards them.
 // Uses safeEventSender to protect against writing to closed channels.
 func (c *CopilotClient) handleSDKEvent(sdkEvent copilot.SessionEvent, events chan<- Event, closeDone func(), pendingToolCalls map[string]ToolCall) {
-	switch sdkEvent.Type {
-	case "assistant.message_delta", "assistant.reasoning_delta":
-		if sdkEvent.Data.DeltaContent == nil {
-			return
-		}
+	switch data := sdkEvent.Data.(type) {
+	case *copilot.AssistantMessageDeltaData:
+		_ = safeEventSender(events, NewTextEvent(data.DeltaContent, false))
 
-		_ = safeEventSender(events, NewTextEvent(*sdkEvent.Data.DeltaContent, strings.Contains(string(sdkEvent.Type), "reasoning")))
+	case *copilot.AssistantReasoningDeltaData:
+		_ = safeEventSender(events, NewTextEvent(data.DeltaContent, true))
 
-	case "assistant.message", "assistant.reasoning":
-		// Complete assistant message
-		if sdkEvent.Data.Content == nil {
-			return
-		}
+	case *copilot.AssistantMessageData:
+		_ = safeEventSender(events, NewTextEvent(data.Content, false))
 
-		_ = safeEventSender(events, NewTextEvent(*sdkEvent.Data.Content, strings.Contains(string(sdkEvent.Type), "reasoning")))
+	case *copilot.AssistantReasoningData:
+		_ = safeEventSender(events, NewTextEvent(data.Content, true))
 
-	case "tool.execution_start":
+	case *copilot.ToolExecutionStartData:
 		// Tool execution started - the SDK handles this internally
 		// We just track it for logging/UI purposes and to match with completion events
-		if sdkEvent.Data.ToolName == nil {
+		if data.ToolName == "" {
 			return
 		}
 
 		toolCall := ToolCall{
-			Name: *sdkEvent.Data.ToolName,
+			ID:   data.ToolCallID,
+			Name: data.ToolName,
 		}
 
-		if sdkEvent.Data.ToolCallID != nil {
-			toolCall.ID = *sdkEvent.Data.ToolCallID
+		if toolCall.ID != "" {
 			// Store for matching with completion event
 			pendingToolCalls[toolCall.ID] = toolCall
 		}
 
 		// Type assert Arguments to map[string]interface{} if possible
-		if args, ok := sdkEvent.Data.Arguments.(map[string]any); ok {
+		if args, ok := data.Arguments.(map[string]any); ok {
 			toolCall.Parameters = args
 		}
 
 		_ = safeEventSender(events, NewToolCallEvent(toolCall))
 
-	case "tool.execution_complete":
+	case *copilot.ToolExecutionCompleteData:
 		// Tool execution completed - emit result event with actual result from SDK
 		var toolCall ToolCall
-		if sdkEvent.Data.ToolCallID != nil {
-			if tc, ok := pendingToolCalls[*sdkEvent.Data.ToolCallID]; ok {
+		if data.ToolCallID != "" {
+			if tc, ok := pendingToolCalls[data.ToolCallID]; ok {
 				toolCall = tc
-				delete(pendingToolCalls, *sdkEvent.Data.ToolCallID)
+				delete(pendingToolCalls, data.ToolCallID)
 			}
-		}
-
-		if toolCall.Name == "" && sdkEvent.Data.ToolName != nil {
-			toolCall.Name = *sdkEvent.Data.ToolName
 		}
 
 		var result string
 		var toolErr error
 
-		if sdkEvent.Data.Result != nil {
-			result = sdkEvent.Data.Result.Content
+		if data.Result != nil {
+			result = data.Result.Content
 		}
 
-		if sdkEvent.Data.Success != nil && !*sdkEvent.Data.Success {
-			if sdkEvent.Data.Error != nil {
-				// ErrorUnion can be either ErrorClass or String
-				if sdkEvent.Data.Error.ErrorClass != nil {
-					toolErr = fmt.Errorf("%s", sdkEvent.Data.Error.ErrorClass.Message)
-				} else if sdkEvent.Data.Error.String != nil {
-					toolErr = fmt.Errorf("%s", *sdkEvent.Data.Error.String)
-				}
-			}
+		if !data.Success && data.Error != nil {
+			toolErr = errors.New(data.Error.Message)
 		}
 
 		_ = safeEventSender(events, NewToolResultEvent(toolCall, result, toolErr))
 
-	case "session.idle":
+	case *copilot.SessionIdleData:
 		// Session has finished processing
 		closeDone()
 
-	case "session.error":
-		// Error event
-		if sdkEvent.Data.Message == nil {
-			return
-		}
-
-		_ = safeEventSender(events, NewErrorEvent(fmt.Errorf("SDK error: %s", *sdkEvent.Data.Message)))
+	case *copilot.SessionErrorData:
+		_ = safeEventSender(events, NewErrorEvent(fmt.Errorf("SDK error: %s", data.Message)))
 	}
 }

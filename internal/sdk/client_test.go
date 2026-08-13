@@ -356,6 +356,41 @@ func TestIsRetryableError(t *testing.T) {
 	}
 }
 
+func TestIsSDKProcessExitTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "process exit timeout",
+			err:      errors.New("timed out waiting for CLI process to exit after kill"),
+			expected: true,
+		},
+		{
+			name:     "wrapped process exit timeout",
+			err:      errors.New("cleanup failed: timed out waiting for CLI process to exit after kill"),
+			expected: true,
+		},
+		{
+			name:     "other stop error",
+			err:      errors.New("connection close failed"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isSDKProcessExitTimeout(tt.err))
+		})
+	}
+}
+
 func TestSafeEventSender(t *testing.T) {
 	// Open channel should succeed
 	events := make(chan Event, 1)
@@ -383,7 +418,7 @@ func TestSendPromptWithRetryCancelledContext(t *testing.T) {
 	// Methods would be defined on fakeSession in a full mock, but are omitted here
 
 	// Can't inject this into client easily; instead test is limited to asserting client methods exist
-	assert.Equal(t, "gpt-4", client.Model())
+	assert.Equal(t, DefaultModel, client.Model())
 
 	// Ensure safeEventSender returns error on closed channel
 	events := make(chan Event, 1)
@@ -437,7 +472,7 @@ func (f *fakeSession) Send(opts any) (string, error) {
 			if h == nil {
 				continue
 			}
-			h(copilot.SessionEvent{Type: "assistant.message_delta", Data: copilot.Data{DeltaContent: ptrString("Hello ")}})
+			h(copilot.SessionEvent{Data: &copilot.AssistantMessageDeltaData{DeltaContent: "Hello "}})
 		}
 
 		// 2) final message
@@ -445,7 +480,7 @@ func (f *fakeSession) Send(opts any) (string, error) {
 			if h == nil {
 				continue
 			}
-			h(copilot.SessionEvent{Type: "assistant.message", Data: copilot.Data{Content: ptrString("Hello world")}})
+			h(copilot.SessionEvent{Data: &copilot.AssistantMessageData{Content: "Hello world"}})
 		}
 
 		// 3) session idle
@@ -453,7 +488,7 @@ func (f *fakeSession) Send(opts any) (string, error) {
 			if h == nil {
 				continue
 			}
-			h(copilot.SessionEvent{Type: "session.idle"})
+			h(copilot.SessionEvent{Data: &copilot.SessionIdleData{}})
 		}
 	}()
 
@@ -466,8 +501,6 @@ func (f *fakeSession) Send(opts any) (string, error) {
 
 func (f *fakeSession) Abort() error   { return nil }
 func (f *fakeSession) Destroy() error { return nil }
-
-func ptrString(s string) *string { return &s }
 
 // testEventDrainTimeout is used by tests that need to drain the events channel
 // without relying on the producer to close it. We use a short timeout to avoid
@@ -492,28 +525,60 @@ func TestHandleSDKEventVariousTypes(t *testing.T) {
 	pending := make(map[string]ToolCall)
 
 	// assistant.message_delta
-	c.handleSDKEvent(copilot.SessionEvent{Type: "assistant.message_delta", Data: copilot.Data{DeltaContent: ptrString("part")}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.AssistantMessageDeltaData{DeltaContent: "part"},
+	}, events, closeDone, pending)
 
 	// assistant.message
-	c.handleSDKEvent(copilot.SessionEvent{Type: "assistant.message", Data: copilot.Data{Content: ptrString("full")}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.AssistantMessageData{Content: "full"},
+	}, events, closeDone, pending)
+
+	// assistant.reasoning_delta
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.AssistantReasoningDeltaData{DeltaContent: "thinking"},
+	}, events, closeDone, pending)
+
+	// assistant.reasoning
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.AssistantReasoningData{Content: "thought"},
+	}, events, closeDone, pending)
 
 	// tool.execution_start
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_start", Data: copilot.Data{ToolName: ptrString("edit"), ToolCallID: ptrString("1"), Arguments: map[string]any{"path": "a.go"}}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.ToolExecutionStartData{
+			ToolName:   "edit",
+			ToolCallID: "1",
+			Arguments:  map[string]any{"path": "a.go"},
+		},
+	}, events, closeDone, pending)
 
 	// tool.execution_complete success
-	// adapt to copilot.ToolResult fields
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: ptrString("1"), ToolName: ptrString("edit"), Result: &copilot.Result{Content: "ok"}, Success: ptrBool(true)}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.ToolExecutionCompleteData{
+			ToolCallID: "1",
+			Result:     &copilot.ToolExecutionCompleteResult{Content: "ok"},
+			Success:    true,
+		},
+	}, events, closeDone, pending)
 
-	// tool.execution_complete failure with Error.String
-	errStr := "tool failed"
-	c.handleSDKEvent(copilot.SessionEvent{Type: "tool.execution_complete", Data: copilot.Data{ToolCallID: ptrString("2"), ToolName: ptrString("run"), Result: &copilot.Result{Content: ""}, Success: ptrBool(false), Error: &copilot.ErrorUnion{String: &errStr}}}, events, closeDone, pending)
+	// tool.execution_complete failure
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.ToolExecutionCompleteData{
+			ToolCallID: "2",
+			Error:      &copilot.ToolExecutionCompleteError{Message: "tool failed"},
+		},
+	}, events, closeDone, pending)
 
 	// session.error
-	msg := "bad"
-	c.handleSDKEvent(copilot.SessionEvent{Type: "session.error", Data: copilot.Data{Message: &msg}}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.SessionErrorData{Message: "bad"},
+	}, events, closeDone, pending)
 
 	// session.idle should call closeDone
-	c.handleSDKEvent(copilot.SessionEvent{Type: "session.idle"}, events, closeDone, pending)
+	c.handleSDKEvent(copilot.SessionEvent{
+		Data: &copilot.SessionIdleData{},
+	}, events, closeDone, pending)
 
 	// Drain events and assert some expected types
 	received := []Event{}
@@ -523,7 +588,7 @@ loop:
 		select {
 		case ev := <-events:
 			received = append(received, ev)
-			if len(received) >= 6 {
+			if len(received) >= 8 {
 				break loop
 			}
 		case <-down:
@@ -531,26 +596,40 @@ loop:
 		}
 	}
 
-	// Expect at least one TextEvent and at least one ToolResultEvent and one ErrorEvent
-	var hasText, hasToolResult, hasError bool
-	for _, e := range received {
-		switch e.Type() {
-		case EventTypeText:
-			hasText = true
-		case EventTypeToolResult:
-			hasToolResult = true
-		case EventTypeError:
-			hasError = true
+	require.Len(t, received, 8)
+
+	textEvents := make([]*TextEvent, 0, 4)
+	toolResultEvents := make([]*ToolResultEvent, 0, 2)
+	for _, event := range received {
+		switch event := event.(type) {
+		case *TextEvent:
+			textEvents = append(textEvents, event)
+		case *ToolResultEvent:
+			toolResultEvents = append(toolResultEvents, event)
 		}
 	}
 
-	assert.True(t, hasText, "should have text events")
-	assert.True(t, hasToolResult, "should have tool result events")
-	assert.True(t, hasError, "should have error events")
+	require.Len(t, textEvents, 4)
+	assert.Equal(t, "part", textEvents[0].Text)
+	assert.False(t, textEvents[0].Reasoning)
+	assert.Equal(t, "full", textEvents[1].Text)
+	assert.False(t, textEvents[1].Reasoning)
+	assert.Equal(t, "thinking", textEvents[2].Text)
+	assert.True(t, textEvents[2].Reasoning)
+	assert.Equal(t, "thought", textEvents[3].Text)
+	assert.True(t, textEvents[3].Reasoning)
+
+	require.Len(t, toolResultEvents, 2)
+	assert.Equal(t, "edit", toolResultEvents[0].ToolCall.Name)
+	assert.Equal(t, "ok", toolResultEvents[0].Result)
+	assert.NoError(t, toolResultEvents[0].Error)
+	assert.EqualError(t, toolResultEvents[1].Error, "tool failed")
+
+	errorEvent, ok := received[7].(*ErrorEvent)
+	require.True(t, ok)
+	assert.Equal(t, "SDK error: bad", errorEvent.Error())
 	assert.True(t, closed, "closeDone should be called on session.idle")
 }
-
-func ptrBool(b bool) *bool { return &b }
 
 func TestSendPromptOnceWithFakeSession(t *testing.T) {
 	c, err := NewCopilotClient()
@@ -587,7 +666,7 @@ drainLoop:
 type testSessionAdapter struct{ inner *fakeSession }
 
 func (a *testSessionAdapter) On(h func(copilot.SessionEvent)) func() {
-	return a.inner.On(func(e copilot.SessionEvent) { h(copilot.SessionEvent{Type: e.Type, Data: copilot.Data{}}) })
+	return a.inner.On(h)
 }
 func (a *testSessionAdapter) Send(opts copilot.MessageOptions) (string, error) {
 	// Delegate to inner and ignore options

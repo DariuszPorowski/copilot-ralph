@@ -59,10 +59,10 @@ Ralph implements the "Ralph Wiggum" technique for self-referential AI developmen
 # From source (requires Go 1.22+)
 go install github.com/JanDeDobbeleer/copilot-ralph/cmd/ralph@latest
 
-# Or build from source
+# Or build from source (requires Task)
 git clone https://github.com/JanDeDobbeleer/copilot-ralph.git
 cd copilot-ralph
-make build
+task build
 ```
 
 ### Usage
@@ -79,7 +79,7 @@ ralph run --max-iterations 5 --timeout 10m "Refactor authentication"
 
 # Custom model and settings
 ralph run \
-  --model gpt-4-turbo \
+  --model gpt-5.4 \
   --promise "Task complete!" \
   --streaming=true \
   "Implement user authentication"
@@ -142,7 +142,7 @@ ralph run task_description.md
 ralph run \
   --max-iterations 20 \
   --timeout 1h \
-  --model gpt-4-turbo \
+  --model gpt-5.4 \
   --log-level debug \
   "Implement user authentication"
 
@@ -161,7 +161,7 @@ Available flags:
 - `--max-iterations, -m` - Maximum loop iterations (default: 10)
 - `--timeout, -t` - Maximum loop runtime (default: 30m)
 - `--promise` - Completion promise phrase (default: "I'm special!")
-- `--model` - AI model to use (default: gpt-4)
+- `--model` - AI model to use (default: auto)
 - `--working-dir` - Working directory (default: current)
 - `--log-level` - Log level: debug, info, warn, error (default: info)
 - `--streaming` - Enable streaming responses (default: true)
@@ -188,7 +188,7 @@ Common flags:
 
 - `--max-iterations 10` - Maximum iterations before stopping
 - `--timeout 30m` - Maximum runtime
-- `--model gpt-4` - AI model to use
+- `--model auto` - Let Copilot select the AI model
 - `--promise "I'm special!"` - Completion phrase
 - `--log-level info` - Logging verbosity
 - `--streaming true` - Enable streaming responses
@@ -202,6 +202,7 @@ Run `ralph run --help` for all available options.
 - Go 1.24 or later
 - GitHub Copilot access
 - Git
+- [Task 3](https://taskfile.dev/installation/)
 
 ### Building
 
@@ -210,16 +211,16 @@ Run `ralph run --help` for all available options.
 go mod download
 
 # Build
-make build
+task build
 
 # Run tests
-make test
+task test
 
 # Run linter
-make lint
+task lint
 
-# All checks (tidy, lint, test, build)
-make all
+# All checks (tidy, format, vet, lint, test, build)
+task all
 ```
 
 ## Architecture
