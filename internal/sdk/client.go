@@ -252,7 +252,7 @@ func (c *CopilotClient) CreateSession(ctx context.Context) error {
 	// Build session config for the SDK
 	sessionConfig := &copilot.SessionConfig{
 		Model:               c.model,
-		Streaming:           copilot.Bool(c.streaming),
+		Streaming:           new(c.streaming),
 		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
 	}
 
